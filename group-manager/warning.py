@@ -34,6 +34,7 @@ def warn_user(update: Updates, session: "Session", reason='تبلیغ') -> None:
                 warning = Warning(group_guid=str(chat_id), user_guid=user_guid, reason=reason)
                 session.add(warning)
                 session.commit()
+                warnings_count = session.query(Warning).filter_by(group_guid=str(chat_id), user_guid=user_guid).count()
 
-                update.reply(f"کاربر [{user.username}]({update.author_guid}) با موفقیت اخطار داده شد.",
+                update.reply(f"@{user.username}\nاخطار - تبلیغ - /قوانین\nتعداد اخطارها تاکنون: {warnings_count}",
                              parse_mode=ParseMode.MARKDOWN)
