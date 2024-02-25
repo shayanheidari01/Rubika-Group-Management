@@ -1,10 +1,13 @@
 import database
 import config
 import random
+import tempfile
 import requests
 import time
 import re
+from taw_bio import TawBio
 from warning import warn_user
+from warn_from_admin import HandleWarns
 from rubpy.enums import ParseMode
 from rubpy import Client, filters, utils
 from datetime import datetime
@@ -13,6 +16,7 @@ from rubpy.types import Update
 
 ADMINS = ['u0FO6Vt011ce3f7136a7dce10604ffbc']
 bot = Client('bot')
+taw_bio = TawBio()
 session = database.Session()
 HASHTAG_RE = re.compile(r'\#\w+')
 LINK_RE = re.compile(r'https?://\S+')
@@ -20,7 +24,12 @@ scheduler = BackgroundScheduler()
 HELP_TEXT = open(r'./help.txt', 'r', encoding='utf-8').read()
 PERSIAN_RE = re.compile(r'[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]+')
 
-def get_int(value):
+BADWORDS = ['کیر', 'کون', 'جنده', 'کونی', 'گایید', 'گاییدم', 'گاییده', 'گاییدی', 'گاییدن', 'کوس', 'کس', 'کسده', 'کیرم',
+            'کیری', 'کیرم دهنت', 'کوسده', 'کصده', 'کص', 'کوص', 'کونتو', 'گاییدمت', 'زنا زاده', 'خارتو', 'سیک', 'بسیک',
+            'بصیک', 'صیک', 'ننه پولی', 'اوبی', 'نگامت', 'ساکر', 'صاکر', 'سکس', 'سکسی', 'صکص', 'سکص', 'صکس', 'صکصی',
+            'کستو', 'کصتو', 'عن', 'گوه', 'گو خوردی', 'گو نخور', 'کسو']
+
+def get_int(value: str):
     try:
         return int(value)
     
@@ -31,7 +40,7 @@ def delete_unauthenticated_users():
     """حذف کاربرانی که مقدار auth آن‌ها False است"""
     session.query(database.UserAuthentication).filter_by(auth=False).delete()
     session.commit()
-    print(f"کاربرانی که auth آن‌ها False است حذف شدند - {datetime.now()}")
+    print(f"Users with 'False' authentication status have been removed - {datetime.now()}")
 
 def generate_math_equation(group_guid: str, user_guid: int) -> str:
     """تولید یک معادله ریاضی ساده و ذخیره نتیجه مورد انتظار در دیتابیس"""
@@ -48,6 +57,17 @@ def generate_math_equation(group_guid: str, user_guid: int) -> str:
 
     return equation
 
+def is_badword(word_list, text):
+    # Change text and words to low mode
+    words = [word.lower() for word in word_list]
+    text = text.lower()
+
+    # Make pattern By using the words
+    pattern = re.compile(rf'\b(?:{"|".join(map(re.escape, words))})\b')
+
+    # Search in text
+    return bool(pattern.search(text))
+
 def authenticate_user(update: Update) -> None:
     # تولید معادله ریاضی و ذخیره نتیجه مورد انتظار در دیتابیس
     equation = generate_math_equation(update.object_guid, update.author_guid)
@@ -58,6 +78,51 @@ def authenticate_user(update: Update) -> None:
                  parse_mode=ParseMode.MARKDOWN)
     time.sleep(20)
     update.delete()
+
+def is_bug(update: Update, result):
+    try:
+        if update.file_inline and update.file_inline.type in ['Voice', 'Music', 'Video']:
+            if update.file_inline.time is None:
+                return update.is_group
+
+    except AttributeError:
+        pass
+
+    return update.is_group and update.text and r'‌‌‌‌‌‍‍          ‍‍' in update.text
+
+@bot.on_message_updates(is_bug)
+async def delete_bug(update: Update):
+    group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
+    if group:
+        await update.reply('یک کاربر باگ ارسال کرد و حذف شد.')
+        await update.delete()
+        await update.ban_member()
+
+@bot.on_message_updates(filters.is_group, filters.Commands(['بیو', 'bio'], ''))
+def send_bio(update: Update):
+    group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
+    if group:
+        bio = taw_bio.get_bio()
+        text = bio.fa.replace('<br />', '\n')
+        keyword = bio.keyword.replace(' ', '_')
+        return update.reply(f'{text}\n\n#{keyword}')
+
+@bot.on_message_updates(filters.is_group, filters.Commands('ویسکال', ''))
+def make_voicecall(update: Update):
+    group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
+    url = update.text.split()[-1]
+    if group and update.is_admin():
+        with tempfile.NamedTemporaryFile('wb+', dir=r'./temps', suffix='.mp3', delete=False) as file:
+            file.write(requests.get(url).content)
+            name = file.name
+        try:
+            bot.voice_chat_player(update.object_guid, name)
+            
+        except:
+            bot.voice_chat_player(update.object_guid, name)
+        update.reply('ویسکال شروع شد.')
+        import os
+        os.remove(name)
 
 @bot.on_message_updates(filters.is_group, filters.Commands(['فونت', 'font'], ''))
 def send_font(update: Update):
@@ -162,7 +227,8 @@ def save_user_info(update: Update) -> None:
                         if number == user_auth.expected_result:
                             session.query(database.UserAuthentication).filter_by(group_guid=update.object_guid, user_guid=update.author_guid).update({"auth": True})
                             update.reply('شما احراز هویت شدید.')
-                if user_auth.auth is False:
+
+                if user_auth and user_auth.auth is False:
                     update.delete()
 
 @bot.on_message_updates(filters.is_group)
@@ -189,6 +255,10 @@ def handle_locks(update: Update):
                     for part in update.metadata.meta_data_parts:
                         if part.type == 'MentionText':
                             return update.delete()
+            elif group.lock_badwords:
+                if is_badword(BADWORDS, update.text):
+                    update.reply('یک فحش حذف شد.')
+                    return warn_user(update, session, 'ارسال فحش')
 
         elif update.file_inline:
             if group.lock_inline:
@@ -221,7 +291,7 @@ def handle_forward(update: Update):
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
 
     if group and group.lock_forward and update.is_admin(user_guid=update.author_guid) is False:
-        return update.delete()
+        return warn_user(update, session, 'ارسال فوروارد')
 
 @bot.on_message_updates(filters.is_group, filters.Commands('status'))
 def get_status(update: Update) -> None:
