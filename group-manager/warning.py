@@ -21,7 +21,7 @@ def warn_user(update: Updates, session: "database.Session", reason='تبلیغ')
             session.query(database.Warning).filter_by(group_guid=update.object_guid, user_guid=user_guid).delete()
             session.commit()
 
-            #update.ban_member(user_guid=update.author_guid)
+            update.ban_member(user_guid=update.author_guid)
             update.reply(f"کاربر [@{user.username}]({update.author_guid}) به دلیل دریافت 3 اخطار بن شد.",
                          parse_mode=ParseMode.MARKDOWN)
         else:
