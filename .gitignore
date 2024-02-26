@@ -3,12 +3,15 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+<<<<<<< HEAD
 # Ignore pycache directories
 __pycache__/
 
 # Ignore files with the .pyc extension
 *.pyc
 
+=======
+>>>>>>> ae03d7c0e03114d91bd2c2b97b61e921e2a0a533
 # C extensions
 *.so
 

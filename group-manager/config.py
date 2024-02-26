@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 LOCK_TYPES = {
     "links": "لینک",
     "hyperlinks": "هایپرلینک",
@@ -24,4 +25,32 @@ LOCK_TYPES = {
     # "reply_spoiler": "ریپلای اسپویلر",
     "polls": "نظرسنجی",
     "story": "استوری"
+=======
+LOCK_TYPES = {
+    "links": "لینک",
+    "hyperlinks": "هایپرلینک",
+    "usernames": "نام کاربری",
+    "hashtags": "هشتگ",
+    "text": "متن",
+    "badwords": "فحش",
+    "forward": "فوروارد",
+    "inline": "اینلاین",
+    "authentication": "احراز هویت",
+    # "emojis": "ایموجی",
+    "files": "فایل",
+    "photos": "عکس",
+    "videos": "ویدیو",
+    "audios": "ویس",
+    "gifs": "گیف",
+    "stickers": "استیکر",
+    "location": "مکان",
+    "contact": "مخاطب",
+    # "sticker_commands": "دستورات استیکر",
+    # "media_commands": "دستورات مدیا",
+    # "voice_commands": "دستورات ویس",
+    "command_mention": "منشن",
+    # "reply_spoiler": "ریپلای اسپویلر",
+    "polls": "نظرسنجی",
+    "story": "استوری"
+>>>>>>> ae03d7c0e03114d91bd2c2b97b61e921e2a0a533
 }
