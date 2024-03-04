@@ -1,5 +1,6 @@
 import database
 import config
+import game
 import random
 import tempfile
 import requests
@@ -23,6 +24,8 @@ LINK_RE = re.compile(r'https?://\S+')
 scheduler = BackgroundScheduler()
 HELP_TEXT = open(r'./help.txt', 'r', encoding='utf-8').read()
 PERSIAN_RE = re.compile(r'[\u0600-\u06FF\uFB50-\uFDFF\uFE70-\uFEFF]+')
+symbols = {2: 'X', 1: 'O'}
+game_data = {}
 
 BADWORDS = ['کیر', 'کون', 'جنده', 'کونی', 'گایید', 'گاییدم', 'گاییده', 'گاییدی', 'گاییدن', 'کوس', 'کس', 'کسده', 'کیرم',
             'کیری', 'کیرم دهنت', 'کوسده', 'کصده', 'کص', 'کوص', 'کونتو', 'گاییدمت', 'زنا زاده', 'خارتو', 'سیک', 'بسیک',
@@ -35,6 +38,9 @@ def get_int(value: str):
     
     except (ValueError, TypeError):
         return None
+
+def get_filename():
+    return str(random.random()) + '.jpg'
 
 def delete_unauthenticated_users():
     """حذف کاربرانی که مقدار auth آن‌ها False است"""
@@ -233,7 +239,6 @@ def save_user_info(update: Update) -> None:
 
 @bot.on_message_updates(filters.is_group)
 def handle_locks(update: Update):
-    print(update)
     group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
 
     if group and update.is_admin(user_guid=update.author_guid) is False:
@@ -303,6 +308,30 @@ def get_status(update: Update) -> None:
 
         update.reply(status_message, parse_mode=ParseMode.MARKDOWN)
 
+@bot.on_message_updates(filters.is_group, filters.Commands('warn'))
+def warn_user_by_admin(update: Update):
+    group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
+    if group and update.is_admin(user_guid=update.author_guid):
+        return HandleWarns(update=update, session=session)
+
+@bot.on_message_updates(filters.is_group, filters.Commands(['بن', 'اخراج'], prefixes=''))
+def ban_user_by_admin(update: Update):
+    group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
+    if group and update.is_admin(user_guid=update.author_guid):
+        if update.reply_message_id:
+            author_guid = update.get_messages(message_ids=update.reply_message_id).messages[0].author_object_guid
+
+        else:
+            author_guid = update.client.get_info(username=update.text.split()[-1]).user_guid
+
+        user = session.query(database.User).filter_by(user_guid=author_guid).first()
+        if user:
+            banned_user = database.BannedUser(group_guid=update.object_guid, user_guid=author_guid)
+            session.add(banned_user)
+            update.ban_member(user_guid=author_guid)
+            update.reply(f"کاربر [@{user.username}]({author_guid}) توسط ادمین از گروه حذف شد.",
+                         parse_mode=ParseMode.MARKDOWN)
+
 @bot.on_message_updates(filters.ObjectGuids(ADMINS), filters.Commands('add'))
 def add_group(update: Update):
     preview = bot.group_preview_by_join_link(update.command[-1])
@@ -328,6 +357,108 @@ def add_group(update: Update):
             text='ربات با موفقیت در گروه فعال شد، لطفا حتما ربات را در گروه فول ادمین کنید در غیر اینصورت ربات به درستی کار نمیکند.\n\nبزرگترین گروه برنامه نویسی در روبیکا:\nhttps://rubika.ir/joing/EBCIHEDF0OPCSKJGOYILJWWJWOSEQRNB',
         )
         return update.reply(f'گروه 「{group_title}」رو اضافه کردم! 😁')
+
+@bot.on_message_updates(filters.text, filters.is_group)
+async def updates(update: Update):
+    group = session.query(database.Group).filter_by(group_guid=update.object_guid).first()
+
+    if group:
+        text: str = update.text
+
+        if text == 'اتمام' and game_data and update.author_guid in game_data.values():
+            game_data.clear()
+            return await update.reply('بازی تمام شد!')
+
+        elif game_data:
+            if game_data['users_count'] == 2:
+                number = get_int(text)
+                if number:
+                    symbol = 'O' if game_data['O'] == update.author_guid else 'X'
+
+                    if game_data['turn'] == symbol and game_data[symbol] == update.author_guid:
+                        if number in game_data['used']:
+                            return await update.reply('لطفا عدد دیگری انتخاب کنید!')
+
+                        row = (number - 1) // 3
+                        col = (number - 1) % 3
+                        game_data.get('instance').play_move(row, col, symbol)
+                        game_data['used'].append(number)
+                        winner = game_data['instance'].check_winner()
+                        if winner:
+                            await update.reply_photo(
+                                photo=game_data['instance'].get_image(),
+                                caption='کاربر {} برنده شد!'.format(winner),
+                                file_name=get_filename())
+                            return game_data.clear()
+
+                        game_data['turn'] = 'O' if symbol == 'X' else 'X'
+                        game_data['round'] = game_data.get('round') + 1
+
+                        if game_data['round'] == 9:
+                            await update.reply_photo(
+                                photo=game_data['instance'].get_image(),
+                                caption='هیچکس برنده نشد، بازی مساوی شد!',
+                                file_name=get_filename())
+                            return game_data.clear()
+                        
+                        if game_data['is_ai'] is True:
+                            symbol = 'O'
+                            ai_move = game_data['instance'].ai.find_best_move(game_data['instance'].board)
+                            game_data['instance'].play_move(*ai_move, symbol=symbol)
+                            game_data['turn'] = 'O' if symbol == 'X' else 'X'
+                            game_data['round'] = game_data.get('round') + 1
+                            
+                        winner = game_data['instance'].check_winner()
+                        if winner:
+                            await update.reply_photo(
+                                photo=game_data['instance'].get_image(),
+                                caption='کاربر {} برنده شد!'.format(winner),
+                                file_name=get_filename())
+                            return game_data.clear()
+
+                        await update.reply_photo(
+                            photo=game_data['instance'].get_image(),
+                            file_name=get_filename(),
+                            caption='حالا {} یک عدد انتخاب کند:'.format('O' if symbol == 'X' else 'X'))
+
+            if text == 'ورود':
+                if not update.author_guid in tuple(game_data.values()):
+                    if not game_data['users_count'] == 2:
+                        if game_data['users_count'] in [0, 2]:
+                            game_data['users_count'] = game_data['users_count'] + 1
+                            game_data[symbols.get(game_data['users_count'])] = update.author_guid
+                            await update.reply('🔥 شما وارد بازی شدید\n\nسمبل شما: {}'.format(symbols.get(game_data['users_count'])))
+
+                        else:
+                            game_data['users_count'] = game_data['users_count'] + 1
+                            game_data[symbols.get(game_data['users_count'])] = update.author_guid
+
+                            await update.reply('🔥 شما وارد بازی شدید\n\nسمبل شما: {}\n\nیک عدد بین ۱ الی ۹ ارسال کنید:'.format(symbols.get(game_data['users_count'])))
+
+        elif text.startswith('شروع'):
+            game_data['instance'] = game.TicTacToeGame()
+            game_data['is_ai'] = False
+            game_data['users_count'] = 0
+            game_data['round'] = 0
+            game_data['used'] = []
+            game_data['turn'] = 'X'
+
+            if text.endswith('بات'):
+                game_data['is_ai'] = True
+                game_data['O'] = bot.guid
+                game_data['X'] = update.author_guid
+                game_data['users_count'] = 2
+
+                ai_move = game_data['instance'].ai.find_best_move(game_data['instance'].board)
+                game_data['instance'].play_move(*ai_move, symbol='O')
+                game_data['round'] = game_data.get('round') + 1
+                return await update.reply_photo(game_data['instance'].get_image(),
+                                                file_name=get_filename(),
+                                                caption='🎮 بازی شروع شد\n\n⚡️لطفا یک عدد بین 1 تا 9 بفرستید.')
+
+            await update.reply_photo(game_data['instance'].get_image(),
+                                     file_name=get_filename(),
+                                     caption='🎮 بازی شروع شد\n\n⚡️برای ورود به بازی کلمه **"ورود"** را ارسال کنید.')
 
 @scheduler.scheduled_job('interval', minutes=5)
 def scheduled_job():
